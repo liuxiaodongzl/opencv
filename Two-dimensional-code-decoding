@@ -1,0 +1,152 @@
+#二维码解码
+#include "zbar.h"      
+#include "cv.h"      
+#include "highgui.h"      
+#include <iostream>      
+
+using namespace std;
+using namespace zbar;  //添加zbar名称空间    
+using namespace cv;
+
+Rect DrawXYProjection(const Mat image, Mat &imageOut, const int threshodValue, const int binaryzationValue)
+{
+	Mat img = image.clone();
+	if (img.channels()>1)
+	{
+		cvtColor(img, img, CV_RGB2GRAY);
+	}
+	Mat out(img.size(), img.type(), Scalar(255));
+	imageOut = out;
+	//对每一个传入的图片做灰度归一化，以便使用同一套阈值参数  
+	normalize(img, img, 0, 255, NORM_MINMAX);
+	vector<int> vectorVertical(img.cols, 0);
+	for (int i = 0;i<img.cols;i++)
+	{
+		for (int j = 0;j<img.rows;j++)
+		{
+			if (img.at<uchar>(j, i)<binaryzationValue)
+			{
+				vectorVertical[i]++;
+			}
+		}
+	}
+	//列值归一化  
+	int high = img.rows / 6;
+	normalize(vectorVertical, vectorVertical, 0, high, NORM_MINMAX);
+	for (int i = 0;i<img.cols;i++)
+	{
+		for (int j = 0;j<img.rows;j++)
+		{
+			if (vectorVertical[i]>threshodValue)
+			{
+				line(imageOut, Point(i, img.rows), Point(i, img.rows - vectorVertical[i]), Scalar(0));
+			}
+		}
+	}
+	//水平投影  
+	vector<int> vectorHorizontal(img.rows, 0);
+	for (int i = 0;i<img.rows;i++)
+	{
+		for (int j = 0;j<img.cols;j++)
+		{
+			if (img.at<uchar>(i, j)<binaryzationValue)
+			{
+				vectorHorizontal[i]++;
+			}
+		}
+	}
+	normalize(vectorHorizontal, vectorHorizontal, 0, high, NORM_MINMAX);
+	for (int i = 0;i<img.rows;i++)
+	{
+		for (int j = 0;j<img.cols;j++)
+		{
+			if (vectorHorizontal[i]>threshodValue)
+			{
+				line(imageOut, Point(img.cols - vectorHorizontal[i], i), Point(img.cols, i), Scalar(0));
+			}
+		}
+	}
+	//找到投影四个角点坐标  
+	vector<int>::iterator beginV = vectorVertical.begin();
+	vector<int>::iterator beginH = vectorHorizontal.begin();
+	vector<int>::iterator endV = vectorVertical.end() - 1;
+	vector<int>::iterator endH = vectorHorizontal.end() - 1;
+	int widthV = 0;
+	int widthH = 0;
+	int highV = 0;
+	int highH = 0;
+	while (*beginV<threshodValue)
+	{
+		beginV++;
+		widthV++;
+	}
+	while (*endV<threshodValue)
+	{
+		endV--;
+		widthH++;
+	}
+	while (*beginH<threshodValue)
+	{
+		beginH++;
+		highV++;
+	}
+	while (*endH<threshodValue)
+	{
+		endH--;
+		highH++;
+	}
+	//投影矩形  
+	Rect rect(widthV, highV, img.cols - widthH - widthV, img.rows - highH - highV);
+	return rect;
+}
+
+int main()
+{
+	Mat image = imread("iot15c.png");
+	Mat imageOut;
+
+	Rect rect(0, 0, 0, 0);
+	rect = DrawXYProjection(image, imageOut, image.rows / 10, 100);
+	Mat roi = image(rect);
+	Mat temp;
+	image.copyTo(temp);
+	//画出条形码的矩形框  
+	rectangle(temp, Point(rect.x, rect.y), Point(rect.x + rect.width, rect.y + rect.height), Scalar(0, 0, 255), 2);
+	imshow("Source Image Rect", temp);
+	Mat resultImage = Mat(image, rect);
+	imwrite("QRcodeResult.bmp", resultImage);
+
+	Mat result = imread("QRcodeResult.bmp");
+	if (!result.empty())
+	{
+		ImageScanner scanner;
+		scanner.set_config(ZBAR_NONE, ZBAR_CFG_ENABLE, 1);
+		Mat imageGray;
+		cvtColor(result, imageGray, CV_RGB2GRAY);
+		int width = imageGray.cols;
+		int height = imageGray.rows;
+		uchar *raw = (uchar *)imageGray.data;
+		Image imageZbar(width, height, "Y800", raw, width * height);
+		scanner.scan(imageZbar); //扫描条码    
+		Image::SymbolIterator symbol = imageZbar.symbol_begin();
+		if (imageZbar.symbol_begin() == imageZbar.symbol_end())
+		{
+			cout << "查询条码失败，请检查图片！" << endl;
+			return -4;
+		}
+		for (;symbol != imageZbar.symbol_end();++symbol)
+		{
+			cout << "类型：" << symbol->get_type_name() << endl;
+			cout << "条码：" << symbol->get_data() << endl;
+		}
+		imshow("Source Image", image);
+		waitKey();
+		imageZbar.set_data(NULL, 0);
+	}
+	else
+	{
+		cout << "图片提取失败" << endl;
+		return -2;
+	}
+	return 0;
+}
